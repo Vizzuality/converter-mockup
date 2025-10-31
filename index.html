@@ -1188,7 +1188,7 @@
 	  if (geometry?.type === 'Point' && Array.isArray(geometry.coordinates)) {
 	      geometry = pointToSquarePolygon(geometry.coordinates, 30);
 	  }
-    const res = await fetch(`${GFW_BASE}/geostore`, {
+    const res = await fetch(`${GFW_BASE}/geostore/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
