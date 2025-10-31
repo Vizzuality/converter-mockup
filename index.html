@@ -1140,7 +1140,7 @@
   const GFW_API_KEY = '10f7953e-c8db-4d34-99c3-ea4bb4a74766';
   
   const GFW_BASE = 'https://data-api.globalforestwatch.org';
-  const GFW_BASE_PROXY = 'https://data-api.globalforestwatch.org';
+  const GFW_BASE_PROXY = 'https://corsproxy.io/?url=https://data-api.globalforestwatch.org';
   const TILE_BASE = 'https://tiles.globalforestwatch.org';
   const DATASET = 'umd_tree_cover_loss';
   const VERSION = 'v1.12'; // Ajusta si cambia la versión publicada
@@ -1161,6 +1161,24 @@
   const gfwMsg       = document.getElementById('gfwMsg');
 
   let gfwTileLayer = null;
+  
+  async function postQuery(dataset, version, sql, geometry){
+    const url = `${GFW_BASE_PROXY}/dataset/${dataset}/${version}/query/json`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type':'application/json', 'x-api-key': GFW_API_KEY },
+      body: JSON.stringify({ sql, geometry: geometry })
+    });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j?.errors?.[0]?.detail || JSON.stringify(j));
+    return j;
+  }
+  function normalizeGeometryForQuery(geometry){
+    if (geometry?.type === 'Point' && Array.isArray(geometry.coordinates)) {
+      return pointToSquarePolygon(geometry.coordinates, 30);
+    }
+    return geometry;
+  }
   
   function pointToSquarePolygon(coords, sizeMeters = 30){
     const [lng, lat] = coords;
@@ -1204,20 +1222,13 @@
     return id;
   }
 
-  async function queryLossYesNo(geostoreId) {
+  async function queryLossYesNo(geometry) {
     const sql = `
       SELECT SUM(area__ha) AS area_ha
       FROM data
       WHERE umd_tree_cover_loss__year >= ${YEARS.start} 
     `.trim();
-	
-/*  const sql = `
-    SELECT SUM(area__ha) AS area_ha
-    FROM data
-    WHERE umd_tree_cover_loss__year = ${YEARS.start} AND ${YEARS.end}
-  `.trim();
-	*/
-
+	/*
     const url = `${GFW_BASE_PROXY}/dataset/${DATASET}/${VERSION}/query/json/?geostore_id=${geostoreId}&x-api-key=${GFW_API_KEY}&geostore_id=${geostoreId}&sql=${sql}`;
     const res = await fetch(url, {
       method: 'GET',
@@ -1228,71 +1239,87 @@
       //body: JSON.stringify({ sql })
     });
     const j = await res.json();
-    if (!res.ok) throw new Error(j?.errors?.[0]?.detail || JSON.stringify(j));
-    const val = Number(j?.data?.[0]?.area_ha || 0);
-    return { areaHa: val, hasLoss: isFinite(val) && val > 0 };
+	*/
+	const j = await postQuery(DATASET, VERSION, sql, geometry);
+	const val = Number(j?.data?.[0]?.area_ha || 0);
+	return { areaHa: val, hasLoss: isFinite(val) && val > 0 };
   }
   
-  async function queryPlantedForestGET(geostoreId) {
+  async function queryPlantedForest(geometry) {
     const dataset = 'gfw_planted_forests';
     const version = 'v20231128';
     const sql = encodeURIComponent('SELECT COUNT(*) AS pixels_in_plantation FROM gfw_planted_forests');
     const key = GFW_API_KEY;
+	/*
     const url = `${GFW_BASE_PROXY}/dataset/${dataset}/${version}/query/json?geostore_id=${geostoreId}&sql=${sql}&x-api-key=${key}`;
     const res = await fetch(url, { method: 'GET' });
     const j = await res.json();
     if (!res.ok) throw new Error(j?.errors?.[0]?.detail || JSON.stringify(j));
+	*/
+	const j = await postQuery(dataset, version, sql, geometry);
     const val = Number(j?.data?.[0]?.pixels_in_plantation || 0);
     return val > 0;
   }
-  async function queryWoodFiberGET(geostoreId) {
+  async function queryWoodFiber(geometry) {
     const dataset = 'gfw_wood_fiber';
     const version = 'v202106';
     const sql = encodeURIComponent('SELECT COUNT(*) AS pixels_in_wood_fiber FROM gfw_wood_fiber');
     const key = GFW_API_KEY;
+	/*
     const url = `${GFW_BASE_PROXY}/dataset/${dataset}/${version}/query/json?geostore_id=${geostoreId}&sql=${sql}&x-api-key=${key}`;
     const res = await fetch(url, { method: 'GET' });
     const j = await res.json();
     if (!res.ok) throw new Error(j?.errors?.[0]?.detail || JSON.stringify(j));
+	*/
+	const j = await postQuery(dataset, version, sql, geometry);
     const val = Number(j?.data?.[0]?.pixels_in_wood_fiber || 0);
     return val > 0;
   }
 
-  async function queryManagedForestsGET(geostoreId) {
+  async function queryManagedForests(geometry) {
     const dataset = 'gfw_managed_forests';
     const version = 'v202106';
     const sql = encodeURIComponent('SELECT COUNT(*) AS pixels_in_managed FROM gfw_managed_forests');
     const key = GFW_API_KEY;
+	/*
     const url = `${GFW_BASE_PROXY}/dataset/${dataset}/${version}/query/json?geostore_id=${geostoreId}&sql=${sql}&x-api-key=${key}`;
     const res = await fetch(url, { method: 'GET' });
     const j = await res.json();
     if (!res.ok) throw new Error(j?.errors?.[0]?.detail || JSON.stringify(j));
+	*/
+	const j = await postQuery(dataset, version, sql, geometry);
     const val = Number(j?.data?.[0]?.pixels_in_managed || 0);
     return val > 0;
   }
-  async function queryWDPAGET(geostoreId) {
+  async function queryWDPA(geometry) {
     const dataset = 'wdpa_protected_areas';
-    const version = 'latest';
+    const version = 'v202407';
     const sql = encodeURIComponent('SELECT COUNT(*) AS features_in_wdpa FROM wdpa_protected_areas');
     const key = GFW_API_KEY;
+	/*
     const url = `${GFW_BASE_PROXY}/dataset/${dataset}/${version}/query/json?geostore_id=${geostoreId}&sql=${sql}&x-api-key=${key}`;
     const res = await fetch(url, { method: 'GET' });
     const j = await res.json();
     if (!res.ok) throw new Error(j?.errors?.[0]?.detail || JSON.stringify(j));
+	*/
+	const j = await postQuery(dataset, version, sql, geometry);
     const val = Number(j?.data?.[0]?.features_in_wdpa || 0);
     return val > 0;
   }
 
-  async function querySBTNNaturalForestsGET(geostoreId) {
+  async function querySBTNNaturalForests(geometry) {
     const dataset = 'sbtn_natural_forests_map';
-    const version = 'latest';
+    const version = 'v202410';
     // Nota: sin filtrar por clase para mantener coherencia con tu patrón "FROM <dataset>"
     const sql = encodeURIComponent('SELECT COUNT(*) AS features_in_sbtn FROM sbtn_natural_forests_map');
     const key = GFW_API_KEY;
+	/*
     const url = `${GFW_BASE_PROXY}/dataset/${dataset}/${version}/query/json?geostore_id=${geostoreId}&sql=${sql}&x-api-key=${key}`;
     const res = await fetch(url, { method: 'GET' });
     const j = await res.json();
     if (!res.ok) throw new Error(j?.errors?.[0]?.detail || JSON.stringify(j));
+	^*/
+	const j = await postQuery(dataset, version, sql, geometry);
     const val = Number(j?.data?.[0]?.features_in_sbtn ?? j?.data?.[0]?.count ?? 0);
     return val > 0;
   }
@@ -1406,13 +1433,21 @@
     if (!geom) { gfwMsg.textContent = 'No geometry found in GeoJSON.'; return; }
 
     try{
-      const geostoreId = await createGeostoreFromGeometry(geom);
-      const { areaHa, hasLoss } = await queryLossYesNo(geostoreId);
-      const inPlantation     = await queryPlantedForestGET(geostoreId);
-      const inWoodFiber      = await queryWoodFiberGET(geostoreId);
-      const inManagedForest  = await queryManagedForestsGET(geostoreId);
-      const inWDPA           = await queryWDPAGET(geostoreId);
-      const inSBTN           = await querySBTNNaturalForestsGET(geostoreId);
+      //const geostoreId = await createGeostoreFromGeometry(geom);
+	  const geomQ = normalizeGeometryForQuery(geom);
+	  const { areaHa, hasLoss } = await queryLossYesNo(geomQ);
+      //const { areaHa, hasLoss } = await queryLossYesNo(geostoreId);
+	  const inPlantation     = await queryPlantedForest(geomQ);
+      //const inPlantation     = await queryPlantedForestGET(geostoreId);
+	  const inWoodFiber      = await queryWoodFiber(geomQ);
+      //const inWoodFiber      = await queryWoodFiberGET(geostoreId);
+      //const inManagedForest  = await queryManagedForestsGET(geostoreId);
+	  const inManagedForest  = await queryManagedForests(geomQ);
+      //const inWDPA           = await queryWDPAGET(geostoreId);
+	  const inWDPA           = await queryWDPA(geomQ);
+      //const inSBTN           = await querySBTNNaturalForestsGET(geostoreId);
+	  //const inSBTN           = await querySBTNNaturalForests(geomQ);
+	  const inSBTN           = null;
 
       const res = assessEUDR(
         { hasLoss, inPlantation, inManagedForest, inWoodFiber, inWDPA, inSBTN },
