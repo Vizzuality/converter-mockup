@@ -380,6 +380,16 @@
   const summary = el('summary');
 
   const endpoint = 'https://ogre.adc4gis.com/convert';
+  
+  // Países para mostrar ajustes de coordenadas de China (vecinos + exportadores regionales)
+  const CHINA_CONTEXT_ISO = new Set([
+    // China y SAR/territorios vinculados
+    'cn','hk','mo','tw',
+    // Vecinos terrestres
+    'mn','ru','kp','vn','la','mm','in','bt','np','pk','af','tj','kg','kz',
+    // Cercanos / exportadores regionales habituales
+    'id','my','kh','th','ph','pg','tl','jp','kr'
+  ]);
 
   let selectedFile = null;
   let lastGeoJSON = null;
@@ -397,6 +407,15 @@
     status.textContent = '';
     summary.textContent = '';
     lastGeoJSON = null;
+  }
+  function resetAdjustments(clearForced = false){
+    const cb   = document.getElementById('chinaCoords');
+    const sel  = document.getElementById('chinaType');
+    const pane = document.getElementById('adjustmentsPanel');
+    if (cb)  cb.checked = false;        // desmarcar
+    if (sel) sel.value   = 'gcj02';     // valor por defecto
+    if (pane) pane.style.display = 'none'; // ocultar hasta nuevo geocoding
+    if (clearForced) lastForcedCoords = null; // opcional: limpiar coords forzadas
   }
 
   function setError(msg){
@@ -417,9 +436,14 @@
   function updateAdjustmentsVisibility(){
     const panel = document.getElementById('adjustmentsPanel');
     if(!panel) return;
-    let show = (lastInputSource === 'pasted');
-    //if (lastDetectedLocation?.country === 'China') show = true;
-    panel.style.display = show ? 'block' : 'none';
+    //let show = (lastInputSource === 'pasted');
+	//const show = (lastInputSource === 'pasted' && /*  condición extra */ false)|| (code && CHINA_CONTEXT_ISO.has(code));
+    
+	// Regla: mostrar SOLO si país detectado está en la lista
+	console.log((lastDetectedLocation?.country_code || '').toLowerCase());
+	const code = (lastDetectedLocation?.country_code || '').toLowerCase();
+	const show = code && CHINA_CONTEXT_ISO.has(code);
+	panel.style.display = show ? 'block' : 'none';
   }
 
   const allowedExt = ['.zip','.kml','.kmz','.gml','.tab','.mif','.dxf','.gpx','.csv','.json','.geojson'];
@@ -715,8 +739,9 @@
     // Algunas regiones vienen como state / region / province / county
     const region = a.state || a.region || a.province || a.county || null;
     const country = a.country || null;
-    if(!region && !country) return null;
-    return { region, country };
+	const country_code = a.country_code || null; // ej. 'cn'
+    if(!region && !country && !country_code) return null;
+    return { region, country, country_code };
   }
 
   // Inserta "Region, Country — " al principio del hint (si tenemos centro)
@@ -731,6 +756,7 @@
 	  // Guarda para uso futuro 
 	  lastDetectedLocation = place;
 	  console.log('Detected location:', lastDetectedLocation);
+	  updateAdjustmentsVisibility();
       const prefix = `${place.region ? (place.region + ', ') : ''}${place.country || ''}`.trim().replace(/^[, ]+|[, ]+$/g,'');
       if(!prefix) return;
       const hintEl = document.getElementById('hint');
@@ -1281,10 +1307,11 @@ lastParseMeta = {
 	  
     }
 
-    btnPrev.addEventListener('click', ()=> handle(tArea.value));
+    btnPrev.addEventListener('click', ()=> {resetAdjustments(true);handle(tArea.value);});
 	const useLoc = document.getElementById('useLoc');
 	useLoc?.addEventListener('click', (e)=>{
 	  e.preventDefault();
+	  resetAdjustments(true);
 	  if (!('geolocation' in navigator)) {
 	    alert('Geolocation is not supported in this browser.');
 	    return;
