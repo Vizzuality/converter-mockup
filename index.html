@@ -876,18 +876,41 @@
       const val = Math.abs(deg) + (Math.abs(min)/60) + (Math.abs(sec)/3600);
       return sign * (deg<0 ? -val : val);
     }
-    function parseDMS(str){
-      // returns {lat, lon} if single pair
-      const s = str.replace(/,/g,' ').replace(/\s+/g,' ').trim();
-      // patterns like: 40° 25' 0" N 3° 42' 0" W
-      const rx = /(\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)?\D*(\d+(?:\.\d+)?)?\s*([NnSs])\s+(\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)?\D*(\d+(?:\.\d+)?)?\s*([EeWw])/;
-      const m = s.match(rx);
-      if(!m) return null;
-      const lat = dmsToDec(+m[1], +(m[2]||0), +(m[3]||0), m[4]);
-      const lon = dmsToDec(+m[5], +(m[6]||0), +(m[7]||0), m[8]);
-	  lastParseMeta = { kind:'dms' };
-      return {lat, lon};
-    }
+	function parseDMS(str){
+	  // returns {lat, lon} if single pair
+	  const s = str.replace(/,/g,' ').replace(/\s+/g,' ').trim();
+
+	  // Permite cualquier separador no numérico (°, ′, ″, ", ', NBSP, etc.)
+	  // Orden 1:  LAT ... N/S   LON ... E/W
+	  const rxLatLon = /([+-]?\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)?\D*(\d+(?:\.\d+)?)?\D*([NnSs])\D+([+-]?\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)?\D*(\d+(?:\.\d+)?)?\D*([EeWw])/;
+
+	  // Orden 2:  LON ... E/W   LAT ... N/S   (por si viniera invertido)
+	  const rxLonLat = /([+-]?\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)?\D*(\d+(?:\.\d+)?)?\D*([EeWw])\D+([+-]?\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)?\D*(\d+(?:\.\d+)?)?\D*([NnSs])/;
+
+	  const m1 = s.match(rxLatLon);
+	  const m2 = !m1 && s.match(rxLonLat);
+
+	  if(!m1 && !m2) return null;
+
+	  function dmsToDec(deg, min=0, sec=0, hem=null){
+	    let sign = 1;
+	    if(hem){ if(/[SW]/i.test(hem)) sign = -1; if(/[NE]/i.test(hem)) sign = 1; }
+	    const val = Math.abs(deg) + (Math.abs(min||0)/60) + (Math.abs(sec||0)/3600);
+	    return sign * (deg<0 ? -val : val);
+	  }
+
+	  if (m1){
+	    const lat = dmsToDec(+m1[1], +(m1[2]||0), +(m1[3]||0), m1[4]);
+	    const lon = dmsToDec(+m1[5], +(m1[6]||0), +(m1[7]||0), m1[8]);
+	    lastParseMeta = { kind:'dms' };
+	    return { lat, lon };
+	  } else {
+	    const lon = dmsToDec(+m2[1], +(m2[2]||0), +(m2[3]||0), m2[4]);
+	    const lat = dmsToDec(+m2[5], +(m2[6]||0), +(m2[7]||0), m2[8]);
+	    lastParseMeta = { kind:'dms' };
+	    return { lat, lon };
+	  }
+	}
 
     // --- Decimal lat,lon / lon,lat lists ---
 	function parseLatLonList(text){
@@ -906,7 +929,7 @@
 	  }
 	  if(!pts.length) return null;
 
-  // --- Decide axis order heuristically ---
+  // --- Decide axis order heuristically TO DO Decide if we leave this to the user---
   const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
   const single = pts.length === 1;
   let assumeLatLon = false;
