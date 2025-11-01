@@ -304,7 +304,8 @@
 	          <div class="muted" id="hint"></div>
 			  <!-- Adjustments (debajo del hint) -->
 			  <div id="adjustmentsPanel" class="card" style="margin-top:8px; display:none">
-			    <h3 style="margin:0 0 6px">Adjustments</h3>
+			    <!-- <h3 style="margin:0 0 6px">Adjustments</h3> -->
+				<p class="muted" style="margin-top:8px">Recommended: If you obtained the coordinates from a China-based service (Baidu, Gaode/Amap, Tencent/QQ, Apple in CN), use these adjustments for better accuracy:</p>
 			    <div class="china-group">
 			      <label class="checkbox-line">
 			        <input id="chinaCoords" type="checkbox" />
@@ -321,7 +322,15 @@
 	        
 	      </div>
 		  
-		  
+		  <div id="gfwPanel" class="card" style="margin-top:12px; display:none">
+		    <h4 style="margin-top:0">Validation</h4>		
+		    <p id="gfwMsg" class="muted" style="margin-top:8px"></p>
+		
+	        <div style="display:flex; gap:8px">
+	          <button id="copy" class="btn">Copy JSON</button>
+	          <a id="download" class="btn" download>Download GeoJSON</a>
+	        </div>
+		  </div>
 
           <div class="tabs">
             <button data-tab="map" class="btn ghost" aria-controls="panel-map">Preview map</button>
@@ -336,15 +345,7 @@
           </div>
         </div>
 		
-	  <div id="gfwPanel" class="card" style="margin-top:12px; display:none">
-	    <h4 style="margin-top:0">Validation</h4>		
-	    <p id="gfwMsg" class="muted" style="margin-top:8px"></p>
-		
-        <div style="display:flex; gap:8px">
-          <button id="copy" class="btn">Copy JSON</button>
-          <a id="download" class="btn" download>Download GeoJSON</a>
-        </div>
-	  </div>
+	  
 	  
 
 	  
@@ -700,7 +701,12 @@
       }
     }
 
-    return msg;
+    
+	// Enlace para invertir ejes SOLO si viene de decimales y es un Point
+	if (source !== 'uploaded' && meta.kind === 'decimal' && type === 'Point') {
+	  msg += ` If this doesn't look right, <a href="#" id="swapAxes">switch lat/lon</a>.`;
+	}
+	return msg;
   }
   // === Reverse geocoding (no key) ===
   // Centro de un GeoJSON (bbox centroid)
@@ -759,11 +765,11 @@
 	  updateAdjustmentsVisibility();
       const prefix = `${place.region ? (place.region + ', ') : ''}${place.country || ''}`.trim().replace(/^[, ]+|[, ]+$/g,'');
       if(!prefix) return;
-      const hintEl = document.getElementById('hint');
-      if(!hintEl) return;
-      // Prepend ubicación
-      //hintEl.textContent = `${prefix} — ${hintEl.textContent}`;
-	  hintEl.innerHTML = `<strong>${prefix}</strong> — ${hintEl.textContent}`;
+	  const hintEl = document.getElementById('hint');
+	  if(!hintEl) return;
+	  // Prepend sin perder el HTML existente
+	  const existing = hintEl.innerHTML;
+	  hintEl.innerHTML = `<strong>${prefix}</strong> — ${existing}`;
     }catch(_){ /* silencioso si falla */ }
   }
 
@@ -1105,6 +1111,12 @@ lastParseMeta = {
       if(obj.type==='Feature') return { type:'FeatureCollection', features:[obj] };
       return { type:'FeatureCollection', features:[{ type:'Feature', properties:{}, geometry: obj }] };
     }
+	function swapAxesFromTextarea(){
+	  const tArea = document.getElementById('coordsInput');
+	  if (!tArea) return;
+	  const raw = (tArea.value || '').trim();
+	  handle(raw, { forcePoint: true, source: 'pasted', userSwapped: true });
+	}
 
     function guessGeometry(text){
       // 1) GeoJSON or WKT
@@ -1248,6 +1260,7 @@ lastParseMeta = {
 	    const lat = parseFloat(m[1]), lon = parseFloat(m[2]);
 	    // recuerda que estas coords fueron “forzadas”
 	    lastForcedCoords = { lat, lon, accuracy: opts.accuracy ?? null };
+		if(!opts.userSwapped){
 	    lastParseMeta = {
 	      kind: 'geolocation',
 	      geomType: 'Point',
@@ -1256,6 +1269,7 @@ lastParseMeta = {
 	      axisReason: 'device geolocation — heuristics bypassed',
 	      accuracy: opts.accuracy ?? null
 	    };
+		};
 	    // para conservar la visibilidad de “Adjustments”, lo marcamos como 'pasted'
 	    lastInputSource = 'pasted';
 	    geomOrFC = {
@@ -1277,10 +1291,18 @@ lastParseMeta = {
 	    const mode = (modeSel && modeSel.value) || 'gcj02';
 	    convertChinaFC(fc, mode);
 	  }
+	  // const hintText = buildHintFromMeta(lastInputSource, lastParseMeta, fc);
+// 	  hint.textContent = hintText;
 	  const hintText = buildHintFromMeta(lastInputSource, lastParseMeta, fc);
-	  hint.textContent = hintText;
+	  hint.innerHTML = hintText;              
+	  // Listener del enlace (si existe)
+	  document.getElementById('swapAxes')?.addEventListener('click', (e)=>{
+	    e.preventDefault();
+	    swapAxesFromTextarea();
+	  });
+	  
 	  updateAdjustmentsVisibility();
-	  updateHintWithLocation(fc); // ← añade país/región de forma asíncrona
+	  updateHintWithLocation(fc); 
 	  result.style.display = 'block'; 
       ensureMap();
       lastGeoJSON = fc;
