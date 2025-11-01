@@ -276,7 +276,8 @@
 	<div id="paste" class="drop" style="margin-top:12px">
 	  <p><strong>Paste coordinates</strong></p>
 	  <p class="muted" style="margin-top:0">
-	    Paste coords from Google Maps, Baidu, GPS, etc. The app will guess the format (lat,lon · [lat,lon] · lists · DMS · UTM · WKT · GeoJSON · ECEF · simple MGRS).
+	    Paste coords from Google Maps, Baidu, GPS, or
+	    <a href="#" id="useLoc">use your device's location</a>.
 	  </p>
 	  <textarea id="coordsInput" rows="4" placeholder="Examples:
 	  40.4168,-3.7038
@@ -287,20 +288,9 @@
 	  { &quot;type&quot;: &quot;Point&quot;, &quot;coordinates&quot;: [-3.7038, 40.4168] }
 	  ECEF(4843520, -360093, 4115200)
 	  4QFJ 12345 67890"></textarea>
-	<!-- chinaCoords/chinaType -->
-	<div class="china-group">
-	  <label class="checkbox-line">
-	    <input id="chinaCoords" type="checkbox" />
-	    <span>Coordinates from China map</span>
-	  </label>
-	  <select id="chinaType">
-	    <option value="gcj02">GCJ-02 (Gaode/Amap, Tencent/QQ, Apple in CN)</option>
-	    <option value="bd09">BD-09 (Baidu)</option>
-	  </select>
-	</div>
+
 	  <div class="row" style="margin-top:8px">
 	    <button id="coordsPreview" class="btn primary">Parse & Preview</button>
-	    <button id="coordsUse" class="btn">Replace current GeoJSON</button>
 	  </div>
 	  <p id="coordsMsg" class="muted" style="margin-top:8px"></p>
 	</div>
@@ -312,6 +302,21 @@
 	        <div>
 	          <div><strong>Location:</strong> </div>
 	          <div class="muted" id="hint"></div>
+			  <!-- Adjustments (debajo del hint) -->
+			  <div id="adjustmentsPanel" class="card" style="margin-top:8px; display:none">
+			    <h3 style="margin:0 0 6px">Adjustments</h3>
+			    <div class="china-group">
+			      <label class="checkbox-line">
+			        <input id="chinaCoords" type="checkbox" />
+			        <span>Coordinates from China map</span>
+			      </label>
+			      <select id="chinaType">
+			        <option value="gcj02">GCJ-02 (Gaode/Amap, Tencent/QQ, Apple in CN)</option>
+			        <option value="bd09">BD-09 (Baidu)</option>
+			      </select>
+			      <button id="applyAdjustments" class="btn" style="margin-left:auto">Apply adjustments</button>
+			    </div>
+			  </div>
 	        </div>
 	        
 	      </div>
@@ -407,6 +412,13 @@
     const box = document.getElementById('result');
     if (!box) return;
     box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+  function updateAdjustmentsVisibility(){
+    const panel = document.getElementById('adjustmentsPanel');
+    if(!panel) return;
+    let show = (lastInputSource === 'pasted');
+    //if (lastDetectedLocation?.country === 'China') show = true;
+    panel.style.display = show ? 'block' : 'none';
   }
 
   const allowedExt = ['.zip','.kml','.kmz','.gml','.tab','.mif','.dxf','.gpx','.csv','.json','.geojson'];
@@ -773,6 +785,7 @@
       download.setAttribute('download', safeName);
       el('json').textContent = text;
 	  hint.textContent = buildHintFromMeta('uploaded', null, geo);
+	  updateAdjustmentsVisibility();
 	  updateHintWithLocation(geo); // ← añade país/región
       result.style.display = 'block';
       setProgress(100,'Done');
@@ -814,7 +827,6 @@
 	  lastParseMeta = null;
     const tArea = document.getElementById('coordsInput');
     const btnPrev = document.getElementById('coordsPreview');
-    const btnUse  = document.getElementById('coordsUse');
     const msg     = document.getElementById('coordsMsg');
 
     if(!tArea) return; // panel no presente
@@ -1194,7 +1206,7 @@ lastParseMeta = {
 	  return { type:'Feature', properties:{}, geometry: convertChinaGeom(fc, mode) };
 	}
 
-    async function handle(text, replace){
+    async function handle(text){
 		lastInputSource = 'pasted';
 		lastParseMeta = null;
       msg.textContent = '';
@@ -1212,6 +1224,7 @@ lastParseMeta = {
 	  }
 	  const hintText = buildHintFromMeta(lastInputSource, lastParseMeta, fc);
 	  hint.textContent = hintText;
+	  updateAdjustmentsVisibility();
 	  updateHintWithLocation(fc); // ← añade país/región de forma asíncrona
 	  result.style.display = 'block'; 
       ensureMap();
@@ -1239,8 +1252,40 @@ lastParseMeta = {
 	  
     }
 
-    btnPrev.addEventListener('click', ()=> handle(tArea.value, false));
-    btnUse .addEventListener('click', ()=> handle(tArea.value, true));
+    btnPrev.addEventListener('click', ()=> handle(tArea.value));
+	const useLoc = document.getElementById('useLoc');
+	useLoc?.addEventListener('click', (e)=>{
+	  e.preventDefault();
+	  if (!('geolocation' in navigator)) {
+	    alert('Geolocation is not supported in this browser.');
+	    return;
+	  }
+	  navigator.geolocation.getCurrentPosition(
+	    ({ coords:{ latitude, longitude, accuracy } }) => {
+	      // “Pegar” en el textarea y ejecutar el mismo flujo
+	      const txt = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
+	      tArea.value = txt;
+	      handle(txt); // llama a tu pipeline: mapa, hint, validación, descarga…
+	    },
+	    (err) => {
+	      alert(err && err.message ? err.message : 'Unable to retrieve your location.');
+	    },
+	    { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+	  );
+	});
+	document.getElementById('applyAdjustments')?.addEventListener('click', ()=>{
+	  // Reaplicar el parseo con los ajustes actuales.
+	  // Si el origen fue "pasted", reutilizamos el contenido del textarea.
+	  if (lastInputSource === 'pasted') {
+	    const tArea = document.getElementById('coordsInput');
+	    if (tArea && tArea.value.trim()) {
+	      handle(tArea.value.trim(), false); // vuelve a ejecutar todo el flujo (mapa, hint, validación, descargas)
+	      return;
+	    }
+	  }
+	  // Si no es "pasted", como norma no aplicamos ajustes (panel normalmente oculto)
+	  // aquí se podría aplicar la conversión China al lastGeoJSON y redibujar.
+	});
   })();
 
   /* =========================
