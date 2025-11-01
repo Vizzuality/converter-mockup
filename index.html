@@ -388,6 +388,7 @@
   let lastInputSource = null;   // 'pasted' | 'uploaded'
   let lastParseMeta   = null;   // detalles de interpretación del pegado
   let lastDetectedLocation = null;
+  let lastForcedCoords = null;  // { lat, lon, accuracy } si viene de geolocalización
 
   function resetUI(){
     err.style.display = 'none';
@@ -651,6 +652,7 @@
     // base line
     let msg = '';
     if(meta.kind === 'geojson') msg = 'Pasted GeoJSON detected.';
+	else if(meta.kind === 'geolocation') msg = `Device location used${meta.accuracy ? ` (±${Math.round(meta.accuracy)} m)` : ''}.`;
     else if(meta.kind === 'wkt') msg = `Pasted WKT (${meta.wktType}).`;
     else if(meta.kind === 'dms') msg = 'Pasted DMS converted to decimal.';
     else if(meta.kind === 'utm') msg = 'Pasted UTM converted to WGS84.';
@@ -1206,12 +1208,39 @@ lastParseMeta = {
 	  return { type:'Feature', properties:{}, geometry: convertChinaGeom(fc, mode) };
 	}
 
-    async function handle(text){
+    async function handle(text, opts = {}){
 		lastInputSource = 'pasted';
 		lastParseMeta = null;
       msg.textContent = '';
-      const geomOrFC = guessGeometry(text || '');
-      if(!geomOrFC){ msg.textContent = 'Could not detect format. Try WKT, GeoJSON, lat,lon, UTM, DMS, or ECEF.'; return; }
+	  
+	  
+	  let geomOrFC;
+	  if (opts && opts.forcePoint === true) {
+	    // extrae lat,lon y crea un Point (lon,lat) sin heurísticas
+	    const m = (text || '').trim().match(/(-?\d+(?:\.\d+)?)[\s,]+(-?\d+(?:\.\d+)?)/);
+	    if(!m){ msg.textContent = 'Could not parse coordinates from device location.'; return; }
+	    const lat = parseFloat(m[1]), lon = parseFloat(m[2]);
+	    // recuerda que estas coords fueron “forzadas”
+	    lastForcedCoords = { lat, lon, accuracy: opts.accuracy ?? null };
+	    lastParseMeta = {
+	      kind: 'geolocation',
+	      geomType: 'Point',
+	      axisSwitched: false,
+	      axisDecision: 'forced from device',
+	      axisReason: 'device geolocation — heuristics bypassed',
+	      accuracy: opts.accuracy ?? null
+	    };
+	    // para conservar la visibilidad de “Adjustments”, lo marcamos como 'pasted'
+	    lastInputSource = 'pasted';
+	    geomOrFC = {
+	      type: 'Feature',
+	      properties: { source: 'geolocation', accuracy: opts.accuracy ?? null },
+	      geometry: { type: 'Point', coordinates: [lon, lat] }
+	    };
+	  } else {
+	    geomOrFC = guessGeometry(text || '');
+	    if(!geomOrFC){ msg.textContent = 'Could not detect format. Try WKT, GeoJSON, lat,lon, UTM, DMS, or ECEF.'; return; }
+	  }
 
       const fc = toFeatureCollection(geomOrFC);
 	  
@@ -1265,7 +1294,7 @@ lastParseMeta = {
 	      // “Pegar” en el textarea y ejecutar el mismo flujo
 	      const txt = `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`;
 	      tArea.value = txt;
-	      handle(txt); // llama a tu pipeline: mapa, hint, validación, descarga…
+	      handle(txt, { forcePoint: true, accuracy, source: 'geolocation' }); 
 	    },
 	    (err) => {
 	      alert(err && err.message ? err.message : 'Unable to retrieve your location.');
@@ -1274,6 +1303,19 @@ lastParseMeta = {
 	  );
 	});
 	document.getElementById('applyAdjustments')?.addEventListener('click', ()=>{
+		if (lastForcedCoords && lastForcedCoords.lat != null && lastForcedCoords.lon != null) {
+		  const tArea = document.getElementById('coordsInput');
+		  const txt = (tArea && tArea.value.trim())
+		    ? tArea.value.trim()
+		    : `${lastForcedCoords.lat}, ${lastForcedCoords.lon}`;
+
+		  handle(txt, {
+		    forcePoint: true,
+		    source: 'geolocation',
+		    accuracy: lastForcedCoords.accuracy
+		  });
+		  return;
+		}
 	  // Reaplicar el parseo con los ajustes actuales.
 	  // Si el origen fue "pasted", reutilizamos el contenido del textarea.
 	  if (lastInputSource === 'pasted') {
