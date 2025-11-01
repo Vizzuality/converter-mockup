@@ -271,23 +271,6 @@
         </div>
       </div>
       
-      <!-- === unnecessary options
-
-      <div class="row" style="margin-top:16px">
-        <div>
-          <label for="sourceSrs">Source SRS (optional, e.g., EPSG:4326)</label>
-          <input id="sourceSrs" type="text" placeholder="" />
-        </div>
-        <div>
-          <label for="targetSrs">Target SRS (optional, e.g., EPSG:4326)</label>
-          <input id="targetSrs" type="text" placeholder="" />
-        </div>
-      </div>
-      <div class="checkbox-line" style="margin-top:6px">
-        <input id="rfc7946" type="checkbox" />
-        <label for="rfc7946" style="margin:0">Produce RFC7946-compliant GeoJSON (Mapbox-compatible)</label>
-      </div>
- === -->
 		  
 	<!-- === Paste coordinates (auto-detect) === -->
 	<div id="paste" class="drop" style="margin-top:12px">
@@ -323,35 +306,17 @@
 	</div>
       
 
-      <div id="result" style="margin-top:14px; display:none"
+      <div id="result" style="margin-top:14px; display:none">
         <div class="out">
-          <div style="display:flex; align-items:center; gap:10px; justify-content:space-between; flex-wrap:wrap">
-            <div>
-              <div><strong>Converted:</strong> <span id="meta"></span></div>
-              <div class="muted" id="hint"></div>
-            </div>
-            <div style="display:flex; gap:8px">
-              <button id="copy" class="btn">Copy JSON</button>
-              <a id="download" class="btn" download>Download GeoJSON</a>
-            </div>
-          </div>
+	      <div style="display:flex; align-items:center; gap:10px; justify-content:space-between; flex-wrap:wrap">
+	        <div>
+	          <div><strong>Location:</strong> </div>
+	          <div class="muted" id="hint"></div>
+	        </div>
+	        
+	      </div>
 		  
-		  <div id="gfwPanel" class="card" style="margin-top:12px; display:none">
-		    <h4 style="margin-top:0">Validation</h4>
-			<!--
-		    <label for="gfwKey">GFW API key</label>
-		    <input id="gfwKey" type="text" placeholder="x-api-key" value="10f7953e-c8db-4d34-99c3-ea4bb4a74766"/>
-		    <div class="row" style="margin-top:8px">
-		      <button id="gfwCheck" class="btn primary">Check tree cover loss</button>
-			  
-		      <button id="gfwTiles" class="btn">Toggle loss tiles</button>
-		      <button1 id="gfwPlantations" class="btn">Toggle plantations</button>
-				  
-		    </div>
-				--->
-			
-		    <p id="gfwMsg" class="muted" style="margin-top:8px"></p>
-		  </div>
+		  
 
           <div class="tabs">
             <button data-tab="map" class="btn ghost" aria-controls="panel-map">Preview map</button>
@@ -365,6 +330,20 @@
             <pre id="json"></pre>
           </div>
         </div>
+		
+	  <div id="gfwPanel" class="card" style="margin-top:12px; display:none">
+	    <h4 style="margin-top:0">Validation</h4>		
+	    <p id="gfwMsg" class="muted" style="margin-top:8px"></p>
+		
+        <div style="display:flex; gap:8px">
+          <button id="copy" class="btn">Copy JSON</button>
+          <a id="download" class="btn" download>Download GeoJSON</a>
+        </div>
+	  </div>
+	  
+
+	  
+	  
       </div>
 
       <p id="err" class="error" role="alert" style="display:none; margin-top:12px"></p>
@@ -401,6 +380,9 @@
   let lastGeoJSON = null;
   let map = null;
   let layer = null;
+  let lastInputSource = null;   // 'pasted' | 'uploaded'
+  let lastParseMeta   = null;   // detalles de interpretación del pegado
+  let lastDetectedLocation = null;
 
   function resetUI(){
     err.style.display = 'none';
@@ -525,9 +507,6 @@
 	// Añadir mapa + control
 	L.control.layers(baseLayers, overlays, { collapsed: true }).addTo(map);
 
-	// Añadir visibles por defecto
-	//lossTiles.addTo(map);
-	//plantationsTiles.addTo(map);
 
     map.setView([0,0], 2);
   }
@@ -618,9 +597,140 @@
       document.getElementById('choose')?.focus();
     }
   });
+  function fcFirstTwoCoords(fc){
+    // encuentra hasta dos pares [lon,lat] en el primer feature/geom
+    const out = [];
+    function pushPair(xy){ if (Array.isArray(xy) && xy.length>=2 && out.length<2) out.push([+xy[0], +xy[1]]); }
+    function walkGeom(g){
+      if(!g) return;
+      const t = g.type;
+      if(t==='Point'){ pushPair(g.coordinates); }
+      else if(t==='MultiPoint' || t==='LineString'){ (g.coordinates||[]).forEach(pushPair); }
+      else if(t==='Polygon' || t==='MultiLineString'){ (g.coordinates?.[0]||[]).forEach(pushPair); }
+      else if(t==='MultiPolygon'){ (g.coordinates?.[0]?.[0]||[]).forEach(pushPair); }
+      else if(t==='GeometryCollection'){ (g.geometries||[]).forEach(walkGeom); }
+    }
+    if(fc.type==='FeatureCollection'){ const f=fc.features?.[0]; walkGeom(f?.geometry); }
+    else if(fc.type==='Feature'){ walkGeom(fc.geometry); }
+    else { walkGeom(fc); }
+    return out;
+  }
+
+  function buildHintFromMeta(source, meta, fc){
+    if(source === 'uploaded'){
+      // muestra formato original → GeoJSON
+      const name = (selectedFile?.name || '').toLowerCase();
+      const ext = name.includes('.') ? name.slice(name.lastIndexOf('.')) : '';
+      return `Uploaded file converted${ext?` from ${ext}`:''} to GeoJSON.`;
+    }
+
+    // pasted
+    if(!meta) return 'Generated from pasted text.';
+    const coords = fcFirstTwoCoords(fc);
+    const two = coords.slice(0,2).map(c => `[${c[0].toFixed(6)}, ${c[1].toFixed(6)}]`).join(' , ');
+    const type = (()=>{
+      if(fc.type==='FeatureCollection'){
+        const f=fc.features?.[0]; return f?.geometry?.type || 'Unknown';
+      }
+      if(fc.type==='Feature') return fc.geometry?.type || 'Unknown';
+      return fc.type || 'Unknown';
+    })();
+
+    // base line
+    let msg = '';
+    if(meta.kind === 'geojson') msg = 'Pasted GeoJSON detected.';
+    else if(meta.kind === 'wkt') msg = `Pasted WKT (${meta.wktType}).`;
+    else if(meta.kind === 'dms') msg = 'Pasted DMS converted to decimal.';
+    else if(meta.kind === 'utm') msg = 'Pasted UTM converted to WGS84.';
+    else if(meta.kind === 'ecef') msg = 'Pasted ECEF converted to WGS84.';
+    else if(meta.kind === 'decimal') msg = 'Pasted decimal coordinates.';
+
+    // details per geometry
+    if(type === 'Point'){
+      const c = coords[0];
+      if (c) msg += ` Interpreted as point: lat ${c[1].toFixed(6)}, lon ${c[0].toFixed(6)}.`;
+    } else {
+      msg += ` Interpreted as ${type}. First coords: ${two || 'n/a'}.`;
+    }
+
+    // axis decision explanation (only for decimal-list path) -- leave it out for now, as it gets confusing
+    if(meta.kind === 'decimal'){
+      if(meta.axisSwitched){
+        //msg += ` Axis switched (${meta.axisDecision}) because ${meta.axisReason}.`;
+      }else if(meta.axisDecision){
+        //msg += ` Axis kept (${meta.axisDecision}) because ${meta.axisReason}.`;
+      }
+    }
+
+    return msg;
+  }
+  // === Reverse geocoding (no key) ===
+  // Centro de un GeoJSON (bbox centroid)
+  function getGeoJSONCenter(geo){
+    // Flatten coords and compute bbox
+    let minX=Infinity, minY=Infinity, maxX=-Infinity, maxY=-Infinity;
+    const push = (xy)=>{ if(!xy||xy.length<2) return; const x=+xy[0], y=+xy[1];
+      if (isFinite(x) && isFinite(y)) { if(x<minX)minX=x; if(y<minY)minY=y; if(x>maxX)maxX=x; if(y>maxY)maxY=y; } };
+    (function walk(g){
+      if(!g) return;
+      const t=g.type;
+      if(t==='FeatureCollection'){ (g.features||[]).forEach(f=>walk(f)); }
+      else if(t==='Feature'){ walk(g.geometry); }
+      else if(t==='Point'){ push(g.coordinates); }
+      else if(t==='MultiPoint'||t==='LineString'){ (g.coordinates||[]).forEach(push); }
+      else if(t==='Polygon'||t==='MultiLineString'){
+        (g.coordinates||[]).forEach(r=> (r||[]).forEach(push));
+      }else if(t==='MultiPolygon'){
+        (g.coordinates||[]).forEach(p=> (p||[]).forEach(r=> (r||[]).forEach(push)));
+      }else if(t==='GeometryCollection'){ (g.geometries||[]).forEach(walk); }
+    })(geo);
+    if(!isFinite(minX) || !isFinite(minY) || !isFinite(maxX) || !isFinite(maxY)){
+      return null;
+    }
+    return [(minX+maxX)/2, (minY+maxY)/2]; // [lon, lat]
+  }
+
+  // Llama a Nominatim y devuelve {region, country} o null
+  async function reverseGeocodeOSM(lon, lat){
+    // idioma en inglés para homogeneidad (ajústalo si quieres 'es')
+    const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${encodeURIComponent(lat)}&lon=${encodeURIComponent(lon)}&accept-language=en&zoom=5&addressdetails=1`;
+    const res = await fetch(url, { method:'GET', headers:{ 'Accept':'application/json' } });
+    if(!res.ok) return null;
+    const j = await res.json();
+    const a = j && j.address || {};
+    // Algunas regiones vienen como state / region / province / county
+    const region = a.state || a.region || a.province || a.county || null;
+    const country = a.country || null;
+    if(!region && !country) return null;
+    return { region, country };
+  }
+
+  // Inserta "Region, Country — " al principio del hint (si tenemos centro)
+  async function updateHintWithLocation(fc){
+    const center = getGeoJSONCenter(fc);
+    if(!center) return;
+    const [lon, lat] = center;
+    try{
+      // Respetar ~1 req/s si fueras a hacer muchas (aquí es esporádico)
+      const place = await reverseGeocodeOSM(lon, lat);
+      if(!place) return;
+	  // Guarda para uso futuro 
+	  lastDetectedLocation = place;
+	  console.log('Detected location:', lastDetectedLocation);
+      const prefix = `${place.region ? (place.region + ', ') : ''}${place.country || ''}`.trim().replace(/^[, ]+|[, ]+$/g,'');
+      if(!prefix) return;
+      const hintEl = document.getElementById('hint');
+      if(!hintEl) return;
+      // Prepend ubicación
+      //hintEl.textContent = `${prefix} — ${hintEl.textContent}`;
+	  hintEl.innerHTML = `<strong>${prefix}</strong> — ${hintEl.textContent}`;
+    }catch(_){ /* silencioso si falla */ }
+  }
 
   async function convert(){
     resetUI();
+	lastInputSource = 'uploaded';
+	lastParseMeta   = null;
     if(!selectedFile){ setError('Please select a file first.'); return; }
 
     validateSelected(selectedFile);
@@ -631,11 +741,6 @@
     try{
       const form = new FormData();
       form.append('upload', selectedFile, selectedFile.name);
-      /*
-	  const src = el('sourceSrs').value.trim();
-      const dst = el('targetSrs').value.trim();
-      const rfc = el('rfc7946').checked;
-	  */
       const src = null;
       const dst = null;
       const rfc = false;
@@ -667,9 +772,8 @@
       const safeName = (selectedFile.name.replace(/\.[^.]+$/,'') || 'data') + '.geojson';
       download.setAttribute('download', safeName);
       el('json').textContent = text;
-
-      meta.textContent = `${safeName} • ${(blob.size/1024).toFixed(1)} KB`;
-      hint.textContent = geo ? 'Detected valid GeoJSON.' : 'Saved as text; validate if needed.';
+	  hint.textContent = buildHintFromMeta('uploaded', null, geo);
+	  updateHintWithLocation(geo); // ← añade país/región
       result.style.display = 'block';
       setProgress(100,'Done');
 
@@ -707,6 +811,7 @@
   
   // ====== Coordinate parsing & guessing ======
   (function(){
+	  lastParseMeta = null;
     const tArea = document.getElementById('coordsInput');
     const btnPrev = document.getElementById('coordsPreview');
     const btnUse  = document.getElementById('coordsUse');
@@ -734,6 +839,7 @@
       if(!m) return null;
       const lat = dmsToDec(+m[1], +(m[2]||0), +(m[3]||0), m[4]);
       const lon = dmsToDec(+m[5], +(m[6]||0), +(m[7]||0), m[8]);
+	  lastParseMeta = { kind:'dms' };
       return {lat, lon};
     }
 
@@ -753,24 +859,7 @@
 	    pts.push([parseFloat(m[1]), parseFloat(m[2])]);
 	  }
 	  if(!pts.length) return null;
-/*
-	  // --- -  // --- Decide axis order heuristically ---
--  const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
--  const rangeX = Math.max(...xs)-Math.min(...xs);
--  const rangeY = Math.max(...ys)-Math.min(...ys);
--  const allAbsX = xs.every(v=>Math.abs(v)<=180);
--  const allAbsY = ys.every(v=>Math.abs(v)<=180);
--
--  let assumeLatLon = false;
--  if (allAbsX && allAbsY){
--    // both within ±180: decide by range (lat smaller spread than lon)
--    assumeLatLon = rangeX < rangeY;
--  } else if (xs.every(v=>Math.abs(v)<=90) && ys.every(v=>Math.abs(v)<=180)){
--    assumeLatLon = true; // likely lat,lon
--  } else {
--    assumeLatLon = false; // likely lon,lat or projected
--  }
-	  */
+
   // --- Decide axis order heuristically ---
   const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
   const single = pts.length === 1;
@@ -811,6 +900,27 @@
 	  : (ok(cand1) ? cand1 : (ok(cand2) ? cand2 : coords[0]));
 	coords[0] = best;
 	}
+const geomType =
+  (coords.length===1) ? 'Point' :
+  (coords.length>=4 && Math.hypot(coords[0][0]-coords[coords.length-1][0], coords[0][1]-coords[coords.length-1][1])<1e-4)
+    ? 'Polygon' :
+    (coords.length===2) ? 'Polygon' : 'LineString';
+
+let axisDecision = assumeLatLon ? 'lat,lon → lon,lat' : 'lon,lat as-is';
+let axisReason = '';
+if (pts.length === 1) {
+  axisReason = 'single pair: valid ranges favored (|lat|≤90, |lon|≤180) and plausibility';
+} else {
+  axisReason = 'spread heuristic (lat spread < lon spread) or range constraints';
+}
+
+lastParseMeta = {
+  kind: 'decimal',
+  axisSwitched: assumeLatLon || false,
+  axisDecision,
+  axisReason,
+  geomType
+};
 
 	  // --- Determine geometry type ---
 	  const eq = (p,q)=> Math.hypot(p[0]-q[0], p[1]-q[1]) < 1e-4;
@@ -836,16 +946,19 @@
       const parseCoord = (tok)=> tok.trim().split(/\s+/).map(Number).slice(0,2); // x y
       if(kind==='POINT'){
         const c = parseCoord(body);
+		lastParseMeta = { kind:'wkt', wktType: kind };
         return { type:'Point', coordinates: c };
       }
       if(kind==='LINESTRING'){
         const coords = body.split(',').map(parseCoord);
+		lastParseMeta = { kind:'wkt', wktType: kind };
         return { type:'LineString', coordinates: coords };
       }
       if(kind==='POLYGON'){
         // One outer ring (simple cases)
         const inner = body.replace(/^\(/,'').replace(/\)$/,'');
         const ring = inner.split(',').map(parseCoord);
+		lastParseMeta = { kind:'wkt', wktType: kind };
         return { type:'Polygon', coordinates:[ring] };
       }
       return null;
@@ -855,6 +968,7 @@
     function parseGeoJSON(text){
       try{
         const j = JSON.parse(text);
+		lastParseMeta = { kind:'geojson' };
         if(j.type==='FeatureCollection' || j.type==='Feature' || (j.type && j.coordinates)) return j;
         return null;
       }catch(_){ return null; }
@@ -873,6 +987,7 @@
       const northing = parseFloat(m[4]);
       const northHem = /[NPQRSTUVWXN]/.test(token); // band letters N..X or 'N' means northern
       const {lat, lon} = utmToLatLon(zone, easting, northing, northHem);
+	  lastParseMeta = { kind:'utm' };
       return { type:'Point', coordinates:[lon,lat] };
     }
     function utmToLatLon(zone, E, N, northern){
@@ -913,6 +1028,7 @@
       if(!m) return null;
       const X=+m[1], Y=+m[2], Z=+m[3];
       const {lat, lon} = ecefToLLA(X,Y,Z);
+	  lastParseMeta = { kind:'ecef' };
       return { type:'Point', coordinates:[lon,lat] };
     }
     function ecefToLLA(X,Y,Z){
@@ -1056,18 +1172,7 @@
 	  else if (t === 'GeometryCollection' && Array.isArray(geom.geometries)) geom.geometries.forEach(g => mapCoords(g, fn));
 	  return geom;
 	}
-	/*
-	function convertChinaGeom(geom, mode){
-	  const conv = (xy)=>{
-	    const [lng, lat] = xy;
-	    if (mode === 'bd09') return bd09_to_wgs84(lng, lat);
-	    //return gcj02_to_wgs84(lng, lat); // default gcj02
-		// instead of: gcj02_to_wgs84(...)
-		return gcj02_to_wgs84_exact(gLng, gLat);
-	  };
-	  return mapCoords(geom, conv);
-	}
-	*/
+
 	function convertChinaGeom(geom, mode){
 	  const conv = (xy)=>{
 	    const [lng, lat] = xy;
@@ -1090,11 +1195,14 @@
 	}
 
     async function handle(text, replace){
+		lastInputSource = 'pasted';
+		lastParseMeta = null;
       msg.textContent = '';
       const geomOrFC = guessGeometry(text || '');
       if(!geomOrFC){ msg.textContent = 'Could not detect format. Try WKT, GeoJSON, lat,lon, UTM, DMS, or ECEF.'; return; }
 
       const fc = toFeatureCollection(geomOrFC);
+	  
 	  // If user marked China coordinate systems, convert to WGS84
 	  const chinaBox = document.getElementById('chinaCoords');
 	  if (chinaBox && chinaBox.checked) {
@@ -1102,6 +1210,9 @@
 	    const mode = (modeSel && modeSel.value) || 'gcj02';
 	    convertChinaFC(fc, mode);
 	  }
+	  const hintText = buildHintFromMeta(lastInputSource, lastParseMeta, fc);
+	  hint.textContent = hintText;
+	  updateHintWithLocation(fc); // ← añade país/región de forma asíncrona
 	  result.style.display = 'block'; 
       ensureMap();
       lastGeoJSON = fc;
@@ -1116,8 +1227,6 @@
       msg.textContent = 'Parsed successfully.';
 	   // --- update Raw JSON panel ---
 	  el('json').textContent = JSON.stringify(fc, null, 2);
-	  hint.textContent = 'Generated from pasted text.';
-	  meta.textContent = 'pasted.geojson';
 
 	  // === make downloadable ===
 	  const blob = new Blob([JSON.stringify(fc, null, 2)], { type: 'application/geo+json' });
@@ -1125,7 +1234,7 @@
 	  download.href = url;
 	  download.setAttribute('download', 'pasted.geojson');
 	  // opcional: tamaño en meta
-	  meta.textContent = `pasted.geojson • ${(blob.size/1024).toFixed(1)} KB`;
+	  //meta.textContent = `pasted.geojson • ${(blob.size/1024).toFixed(1)} KB`;
 	  
 	  
     }
@@ -1145,25 +1254,24 @@
   const DATASET = 'umd_tree_cover_loss';
   const VERSION = 'v1.12'; // Ajusta si cambia la versión publicada
   const YEARS = { start: 2020, end: 2024 };
+  const EUDR_RESULTS = {
+    COMPLIANT:        { label: 'Compliant',         color: '#e6f4ea' }, // verde muy claro
+    NEED_VERIFICATION:{ label: 'Need verification', color: '#fffbe6' }, // amarillo pálido
+    NOT_COMPLIANT:    { label: 'Not compliant',     color: '#fde8e8' }  // rojo muy claro
+  };
   const PLANTATIONS_TILE= 'https://tiles.globalforestwatch.org/gfw_planted_forests/v20231128/corrected/{z}/{x}/{y}.png'; 
-  // adjust version if 404
-  //https://tiles.globalforestwatch.org/gfw_planted_forests/v20231128/corrected/9/407/212.png
   const TILE_LOSS = `${TILE_BASE}/umd_tree_cover_loss/v1.12/tcd_30/{z}/{x}/{y}.png`;
   const TILE_PLANT = `${TILE_BASE}/gfw_planted_forests/v20231128/corrected/{z}/{x}/{y}.png`;
   const TILE_WOOD  = `${TILE_BASE}/gfw_wood_fiber/v202106/{z}/{x}/{y}.png`;
   const TILE_MANAGED = `${TILE_BASE}/gfw_managed_forests/v202106/{z}/{x}/{y}.png`;
   let gfwPlantLayer = null;
-
-  //const gfwKeyInput = document.getElementById('gfwKey');
-  //const gfwCheckBtn  = document.getElementById('gfwCheck');
- // const gfwTilesBtn  = document.getElementById('gfwTiles');
- // const gfwPlantationsBtn = document.getElementById('gfwPlantations');
+  let lastValidation = null; // { code: 'COMPLIANT'|'NEED_VERIFICATION'|'NOT_COMPLIANT', verdict, reason, notes }
   const gfwMsg       = document.getElementById('gfwMsg');
 
   let gfwTileLayer = null;
   
   async function postQuery(dataset, version, sql, geometry){
-    const url = `${GFW_BASE_PROXY}/dataset/${dataset}/${version}/query/json`;
+    const url = `${GFW_BASE}/dataset/${dataset}/${version}/query/json`;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type':'application/json', 'x-api-key': GFW_API_KEY },
@@ -1228,18 +1336,6 @@
       FROM data
       WHERE umd_tree_cover_loss__year >= ${YEARS.start} 
     `.trim();
-	/*
-    const url = `${GFW_BASE_PROXY}/dataset/${DATASET}/${VERSION}/query/json/?geostore_id=${geostoreId}&x-api-key=${GFW_API_KEY}&geostore_id=${geostoreId}&sql=${sql}`;
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': GFW_API_KEY
-      },
-      //body: JSON.stringify({ sql })
-    });
-    const j = await res.json();
-	*/
 	const j = await postQuery(DATASET, VERSION, sql, geometry);
 	const val = Number(j?.data?.[0]?.area_ha || 0);
 	return { areaHa: val, hasLoss: isFinite(val) && val > 0 };
@@ -1250,12 +1346,6 @@
     const version = 'v20231128';
     const sql = encodeURIComponent('SELECT COUNT(*) AS pixels_in_plantation FROM gfw_planted_forests');
     const key = GFW_API_KEY;
-	/*
-    const url = `${GFW_BASE_PROXY}/dataset/${dataset}/${version}/query/json?geostore_id=${geostoreId}&sql=${sql}&x-api-key=${key}`;
-    const res = await fetch(url, { method: 'GET' });
-    const j = await res.json();
-    if (!res.ok) throw new Error(j?.errors?.[0]?.detail || JSON.stringify(j));
-	*/
 	const j = await postQuery(dataset, version, sql, geometry);
     const val = Number(j?.data?.[0]?.pixels_in_plantation || 0);
     return val > 0;
@@ -1265,12 +1355,6 @@
     const version = 'v202106';
     const sql = encodeURIComponent('SELECT COUNT(*) AS pixels_in_wood_fiber FROM gfw_wood_fiber');
     const key = GFW_API_KEY;
-	/*
-    const url = `${GFW_BASE_PROXY}/dataset/${dataset}/${version}/query/json?geostore_id=${geostoreId}&sql=${sql}&x-api-key=${key}`;
-    const res = await fetch(url, { method: 'GET' });
-    const j = await res.json();
-    if (!res.ok) throw new Error(j?.errors?.[0]?.detail || JSON.stringify(j));
-	*/
 	const j = await postQuery(dataset, version, sql, geometry);
     const val = Number(j?.data?.[0]?.pixels_in_wood_fiber || 0);
     return val > 0;
@@ -1281,12 +1365,6 @@
     const version = 'v202106';
     const sql = encodeURIComponent('SELECT COUNT(*) AS pixels_in_managed FROM gfw_managed_forests');
     const key = GFW_API_KEY;
-	/*
-    const url = `${GFW_BASE_PROXY}/dataset/${dataset}/${version}/query/json?geostore_id=${geostoreId}&sql=${sql}&x-api-key=${key}`;
-    const res = await fetch(url, { method: 'GET' });
-    const j = await res.json();
-    if (!res.ok) throw new Error(j?.errors?.[0]?.detail || JSON.stringify(j));
-	*/
 	const j = await postQuery(dataset, version, sql, geometry);
     const val = Number(j?.data?.[0]?.pixels_in_managed || 0);
     return val > 0;
@@ -1296,12 +1374,6 @@
     const version = 'v202407';
     const sql = encodeURIComponent('SELECT COUNT(*) AS features_in_wdpa FROM wdpa_protected_areas');
     const key = GFW_API_KEY;
-	/*
-    const url = `${GFW_BASE_PROXY}/dataset/${dataset}/${version}/query/json?geostore_id=${geostoreId}&sql=${sql}&x-api-key=${key}`;
-    const res = await fetch(url, { method: 'GET' });
-    const j = await res.json();
-    if (!res.ok) throw new Error(j?.errors?.[0]?.detail || JSON.stringify(j));
-	*/
 	const j = await postQuery(dataset, version, sql, geometry);
     const val = Number(j?.data?.[0]?.features_in_wdpa || 0);
     return val > 0;
@@ -1313,53 +1385,11 @@
     // Nota: sin filtrar por clase para mantener coherencia con tu patrón "FROM <dataset>"
     const sql = encodeURIComponent('SELECT COUNT(*) AS features_in_sbtn FROM sbtn_natural_forests_map');
     const key = GFW_API_KEY;
-	/*
-    const url = `${GFW_BASE_PROXY}/dataset/${dataset}/${version}/query/json?geostore_id=${geostoreId}&sql=${sql}&x-api-key=${key}`;
-    const res = await fetch(url, { method: 'GET' });
-    const j = await res.json();
-    if (!res.ok) throw new Error(j?.errors?.[0]?.detail || JSON.stringify(j));
-	^*/
 	const j = await postQuery(dataset, version, sql, geometry);
     const val = Number(j?.data?.[0]?.features_in_sbtn ?? j?.data?.[0]?.count ?? 0);
     return val > 0;
   }
-/*
-  function toggleLossTiles() {
-    if (!map) return;
-    if (gfwTileLayer) {
-      map.removeLayer(gfwTileLayer);
-      gfwTileLayer = null;
-      gfwTilesBtn.textContent = 'Show loss tiles';
-      return;
-    }
-    // Capa de pérdida (umbral tcd_30). Si devuelve 404, revisa VERSION publicada en GFW tiles.
-    const tileUrl = `${TILE_BASE}/${DATASET}/${VERSION}/tcd_30/{z}/{x}/{y}.png`;
-    gfwTileLayer = L.tileLayer(tileUrl, {
-      opacity: 0.6,
-      attribution: '&copy; Global Forest Watch / UMD Hansen'
-    }).addTo(map);
-    gfwTilesBtn.textContent = 'Hide loss tiles';
-  }
-  
-  function togglePlantationsTiles() {
-    if (!map) return;
-    if (gfwPlantLayer) {
-      map.removeLayer(gfwPlantLayer);
-      gfwPlantLayer = null;
-      gfwPlantationsBtn.textContent = 'Show plantations';
-      return;
-    }
-    gfwPlantLayer = L.tileLayer(PLANTATIONS_TILE, {
-      opacity: 0.7,
-      attribution: '&copy; Global Forest Watch / SDPT'
-    }).addTo(map);
-    gfwPlantationsBtn.textContent = 'Hide plantations';
-  }
-  */
 
-  //?.addEventListener('click', () => toggleLossTiles());
-  
-  //gfwPlantationsBtn?.addEventListener('click', () => togglePlantationsTiles());
   
   function assessEUDR({ hasLoss, inPlantation, inManagedForest, inWoodFiber, inWDPA, inSBTN }, years){
     const ctx = [];
@@ -1367,14 +1397,14 @@
 
     // Priority 1: Protected areas
     if (inWDPA) {
-      return { verdict: 'Not compliant', level: 'high', 
+      return { code: 'NOT_COMPLIANT', verdict: 'Not compliant', level: 'high', 
         reason: 'Inside protected area (WDPA). Extraction likely illegal.',
         notes: ['Prohibit sourcing.'] };
     }
 
     // Priority 0: Loss baseline
     if (hasLoss && !inProductive) {
-      return { verdict: 'Not compliant', level: 'high',
+      return { code: 'NOT_COMPLIANT', verdict: 'Not compliant', level: 'high',
         reason: `Tree cover loss in ${years.start}–${years.end} outside plantation/managed areas (deforestation).`,
         notes: ['Reject or investigate exceptional legal authorization.'] };
     }
@@ -1382,12 +1412,12 @@
     // Priority 2: Natural forest
     if (inSBTN && !inProductive) {
       if (hasLoss) {
-        return { verdict: 'Not compliant', level: 'high',
+        return { code: 'NOT_COMPLIANT', verdict: 'Not compliant', level: 'high',
           reason: `Loss detected in natural forest (SBTN).`,
           notes: ['Reject under EUDR deforestation definition.'] };
       }
       // pre-extraction case or no observed loss
-      return { verdict: 'Needs verification', level: 'medium-high',
+      return { code: 'NEED_VERIFICATION', verdict: 'Needs verification', level: 'medium-high',
         reason: 'Natural forest (SBTN). Any extraction risks conversion.',
         notes: ['Require robust evidence of non-conversion and legal authorization.'] };
     }
@@ -1395,22 +1425,22 @@
     // Priority 3: Productive forest (plantation / managed / wood fiber)
     if (inProductive) {
       if (hasLoss) {
-        return { verdict: 'Compliant', level: 'low',
+        return { code: 'COMPLIANT', verdict: 'Compliant', level: 'low',
           reason: `Loss only within plantation/managed forest (rotation/harvest).`,
           notes: ['Keep permit/concession evidence.'] };
       }
-      return { verdict: 'Compliant', level: 'low',
+      return { code: 'COMPLIANT', verdict: 'Compliant', level: 'low',
         reason: 'Inside plantation/managed forest with no loss since 2020.',
         notes: ['Collect/verify permits and management docs.'] };
     }
 
     // Priority 4: Everything else
     if (hasLoss) {
-      return { verdict: 'Not compliant', level: 'high',
+      return { code: 'NOT_COMPLIANT', verdict: 'Not compliant', level: 'high',
         reason: `Loss detected in ${years.start}–${years.end} outside recognized forest management/plantation.`,
         notes: ['Reject unless strong contrary evidence.'] };
     } else {
-      return { verdict: 'Needs verification', level: 'medium',
+      return { code: 'NEED_VERIFICATION', verdict: 'Needs verification', level: 'medium-high',
         reason: 'No loss detected, but area is outside mapped forest/plantation layers.',
         notes: ['Demonstrate non-forest status since 2020 (imagery, land registers).'] };
     }
@@ -1419,6 +1449,8 @@
   async function runGfwValidation(){
     const gfwMsg = document.getElementById('gfwMsg');
     gfwMsg.textContent = 'Validating…';
+	const panel = document.getElementById('gfwPanel');
+	if (panel) panel.style.backgroundColor = '';
 
     // Toma la primera geometría del lastGeoJSON
     let geom = null;
@@ -1433,20 +1465,12 @@
     if (!geom) { gfwMsg.textContent = 'No geometry found in GeoJSON.'; return; }
 
     try{
-      //const geostoreId = await createGeostoreFromGeometry(geom);
 	  const geomQ = normalizeGeometryForQuery(geom);
 	  const { areaHa, hasLoss } = await queryLossYesNo(geomQ);
-      //const { areaHa, hasLoss } = await queryLossYesNo(geostoreId);
 	  const inPlantation     = await queryPlantedForest(geomQ);
-      //const inPlantation     = await queryPlantedForestGET(geostoreId);
 	  const inWoodFiber      = await queryWoodFiber(geomQ);
-      //const inWoodFiber      = await queryWoodFiberGET(geostoreId);
-      //const inManagedForest  = await queryManagedForestsGET(geostoreId);
 	  const inManagedForest  = await queryManagedForests(geomQ);
-      //const inWDPA           = await queryWDPAGET(geostoreId);
 	  const inWDPA           = await queryWDPA(geomQ);
-      //const inSBTN           = await querySBTNNaturalForestsGET(geostoreId);
-	  //const inSBTN           = await querySBTNNaturalForests(geomQ);
 	  const inSBTN           = null;
 
       const res = assessEUDR(
@@ -1454,6 +1478,11 @@
         YEARS
       );
       gfwMsg.textContent = `${res.verdict} — ${res.reason}`;
+	  const panel = document.getElementById('gfwPanel');
+	  lastValidation = res; // guarda el resultado estructurado
+	  if (panel && res?.code && EUDR_RESULTS[res.code]) {
+	    panel.style.backgroundColor = EUDR_RESULTS[res.code].color;
+	  }
     } catch(e){
       console.error(e);
       gfwMsg.textContent = `Error: ${e.message || e}`;
