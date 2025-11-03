@@ -305,7 +305,7 @@
 			  <!-- Adjustments (debajo del hint) -->
 			  <div id="adjustmentsPanel" class="card" style="margin-top:8px; display:none">
 			    <!-- <h3 style="margin:0 0 6px">Adjustments</h3> -->
-				<p class="muted" style="margin-top:8px">Recommended: If you obtained the coordinates from a China-based service (Baidu, Gaode/Amap, Tencent/QQ, Apple in CN), use these adjustments for better accuracy:</p>
+				<p class="muted" style="margin-top:8px"><strong>Recommended:</strong> If you obtained the coordinates from a China-based service (Baidu, Gaode/Amap, Tencent/QQ, Apple in CN), use these adjustments for better accuracy:</p>
 			    <div class="china-group">
 			      <label class="checkbox-line">
 			        <input id="chinaCoords" type="checkbox" />
@@ -955,6 +955,7 @@
     ? pts.map(p => [p[1], p[0]]) // lat,lon → lon,lat
     : pts.map(p => [p[0], p[1]]);
 	// --- Fallback si hay UN solo punto: probar ambas interpretaciones y escoger la más plausible ---
+	/*
 	if (coords.length === 1) {
 	const [a, b] = pts[0];              // a,b vienen del texto
 	const cand1 = [b, a];               // asumiendo lat,lon → lon,lat
@@ -969,6 +970,7 @@
 	  : (ok(cand1) ? cand1 : (ok(cand2) ? cand2 : coords[0]));
 	coords[0] = best;
 	}
+	*/
 const geomType =
   (coords.length===1) ? 'Point' :
   (coords.length>=4 && Math.hypot(coords[0][0]-coords[coords.length-1][0], coords[0][1]-coords[coords.length-1][1])<1e-4)
