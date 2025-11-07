@@ -1519,7 +1519,7 @@ lastParseMeta = {
 	// better:
 	const plantedLabel = p.Ind_07_planted_plantations_2020 === 'yes';
 	const fracPlant = Math.max(+(p.GFT_planted_plantation || 0), +(p.IIASA_planted_plantation || 0));
-	const plantedHigh = plantedLabel && fracPlant >= 90;
+	const plantedHigh = plantedLabel && fracPlant >= 100;
 	const plantedMid  = !plantedHigh && fracPlant >= 60;
 
 	
@@ -1711,7 +1711,7 @@ lastParseMeta = {
 	// If mixed plantation (plantedMid) and no other productive flags:
 	if (!inProductive && wh.plantedMid) {
 	  if (hasLoss) {
-	    return { code:'NOT_COMPLIANT', verdict:'High risk', reason:'Post-2020 loss in mixed area; plantation fraction insufficient.' };
+	    return { code:'NOT_COMPLIANT', verdict:'High risk', reason:'Post-2020 loss in mixed area; risk of loss outside plantation area.' };
 	  }
 	  return { code:'NEED_VERIFICATION', verdict:'More info needed', reason:'Mixed plantation coverage; verify stand boundaries & permits.' };
 	}
