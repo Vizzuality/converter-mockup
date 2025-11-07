@@ -276,7 +276,7 @@
 	<div id="paste" class="drop" style="margin-top:12px">
 	  <p><strong>Paste coordinates</strong></p>
 	  <p class="muted" style="margin-top:0">
-	    Paste coords from Google Maps, Baidu, GPS, or
+	    Paste coords (from Google Maps, Google Earth, Baidu, Amap, QQ, GPS, etc.), or
 	    <a href="#" id="useLoc">use your device's location</a>.
 	  </p>
 	  <textarea id="coordsInput" rows="4" placeholder="Examples:
@@ -470,6 +470,25 @@
 
     validation.textContent = messages.join(' ');
     return true; // Non-blocking validation
+  }
+  function isValidLonLat(lon, lat){
+    return isFinite(lon) && isFinite(lat) && Math.abs(lon) <= 180 && Math.abs(lat) <= 90;
+  }
+
+  function buildBadCoordMessage(raw){
+    const tips = [];
+    // Commas between digits → likely EU decimal separator
+    if (/\d,\d/.test(raw)) {
+      tips.push('Use a period as decimal separator (e.g., 41.49559, -3.92382).');
+    }
+    // DMS with commas as decimals (Apple Maps style)
+    if ((/[°′'″"]/).test(raw) && /\d,\d/.test(raw)) {
+      tips.push('For DMS, use periods inside numbers (e.g., 41°29\'44.1" N, 3°55\'25.8" W).');
+    }
+    // Missing separators or wrong order
+    tips.push('Separate latitude and longitude with a comma or space.');
+    tips.push('If it still looks wrong, try swapping lat/lon using the “switch lat/lon” link.');
+    return 'Couldn’t interpret coordinates.\n\nSuggestions:\n- ' + tips.join('\n- ');
   }
 
   function switchTab(which){
@@ -1375,6 +1394,13 @@ lastParseMeta = {
 	  }
 
       const fc = toFeatureCollection(geomOrFC);
+	  
+	  // Validate first coordinate before proceeding
+	  const first = getFirstPointCoordFromFC(fc);
+	  if (first && (!isValidLonLat(first[0], first[1]))) {
+	    alert(buildBadCoordMessage(text || ''));
+	    return; // abort flow (don’t draw map, don’t run validations)
+	  }
 	  
 	  // If user marked China coordinate systems, convert to WGS84
 	  const chinaBox = document.getElementById('chinaCoords');
