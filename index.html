@@ -323,7 +323,7 @@
 	      </div>
 		  
 		  <div id="gfwPanel" class="card" style="margin-top:12px; display:none">
-		    <h4 style="margin-top:0">Validation</h4>		
+		    <h4 style="margin-top:0">Risk assessment</h4>		
 		    <p id="gfwMsg" class="muted" style="margin-top:8px"></p>
 		
 	        <div style="display:flex; gap:8px">
@@ -400,6 +400,8 @@
   let lastParseMeta   = null;   // detalles de interpretación del pegado
   let lastDetectedLocation = null;
   let lastForcedCoords = null;  // { lat, lon, accuracy } si viene de geolocalización
+  
+
 
   function resetUI(){
     err.style.display = 'none';
@@ -653,6 +655,11 @@
     else { walkGeom(fc); }
     return out;
   }
+  function isAmbiguousLonLat(lon, lat){
+    // Ambiguo si, al invertir, lon' = lat (siempre válido: |lat| ≤ 180)
+    // y lat' = lon es válido como latitud ⇒ |lon| ≤ 90
+    return Math.abs(lon) <= 90 && Math.abs(lat) <= 90 && Math.abs(lat) <= 60;
+  }
 
   function buildHintFromMeta(source, meta, fc){
     if(source === 'uploaded'){
@@ -703,9 +710,13 @@
 
     
 	// Enlace para invertir ejes SOLO si viene de decimales y es un Point
-	if (source !== 'uploaded' && meta.kind === 'decimal' && type === 'Point') {
-	  msg += ` If this doesn't look right, <a href="#" id="swapAxes">switch lat/lon</a>.`;
-	}
+	// if (source !== 'uploaded' && meta.kind === 'decimal' && type === 'Point') {
+	//   msg += ` If this doesn't look right, <a href="#" id="swapAxes">switch lat/lon</a>.`;
+	// }
+	const c = coords[0]; // [lon, lat]
+	  if (c && isAmbiguousLonLat(c[0], c[1])) {
+	    msg += ` If this doesn't look right, <a href="#" id="swapAxes">switch lat/lon</a>.`;
+	 }
 	return msg;
   }
   // === Reverse geocoding (no key) ===
@@ -933,29 +944,29 @@
   const xs = pts.map(p=>p[0]), ys = pts.map(p=>p[1]);
   const single = pts.length === 1;
   let assumeLatLon = false;
-  if (single) {
-    // Prefer the common pattern: lat, lon
-    const [a,b] = pts[0];
-    assumeLatLon = (Math.abs(a) <= 90 && Math.abs(b) <= 180);
-  } else {
-    const rangeX = Math.max(...xs)-Math.min(...xs);
-    const rangeY = Math.max(...ys)-Math.min(...ys);
-    const allAbsX = xs.every(v=>Math.abs(v)<=180);
-    const allAbsY = ys.every(v=>Math.abs(v)<=180);
-    if (allAbsX && allAbsY){
-      // both within ±180: decide by spread (lat usually has smaller spread)
-      assumeLatLon = rangeX < rangeY;
-    } else if (xs.every(v=>Math.abs(v)<=90) && ys.every(v=>Math.abs(v)<=180)){
-      assumeLatLon = true; // likely lat,lon
-    } else {
-      assumeLatLon = false; // likely lon,lat or projected
-    }
-  }
+  // if (single) {
+  //   // Prefer the common pattern: lat, lon
+  //   const [a,b] = pts[0];
+  //   assumeLatLon = (Math.abs(a) <= 90 && Math.abs(b) <= 180);
+  // } else {
+  //   const rangeX = Math.max(...xs)-Math.min(...xs);
+  //   const rangeY = Math.max(...ys)-Math.min(...ys);
+  //   const allAbsX = xs.every(v=>Math.abs(v)<=180);
+  //   const allAbsY = ys.every(v=>Math.abs(v)<=180);
+  //   if (allAbsX && allAbsY){
+  //     // both within ±180: decide by spread (lat usually has smaller spread)
+  //     assumeLatLon = rangeX < rangeY;
+  //   } else if (xs.every(v=>Math.abs(v)<=90) && ys.every(v=>Math.abs(v)<=180)){
+  //     assumeLatLon = true; // likely lat,lon
+  //   } else {
+  //     assumeLatLon = false; // likely lon,lat or projected
+  //   }
+  // }
 	const coords = assumeLatLon
     ? pts.map(p => [p[1], p[0]]) // lat,lon → lon,lat
     : pts.map(p => [p[0], p[1]]);
 	// --- Fallback si hay UN solo punto: probar ambas interpretaciones y escoger la más plausible ---
-	/*
+	
 	if (coords.length === 1) {
 	const [a, b] = pts[0];              // a,b vienen del texto
 	const cand1 = [b, a];               // asumiendo lat,lon → lon,lat
@@ -970,7 +981,7 @@
 	  : (ok(cand1) ? cand1 : (ok(cand2) ? cand2 : coords[0]));
 	coords[0] = best;
 	}
-	*/
+	
 const geomType =
   (coords.length===1) ? 'Point' :
   (coords.length>=4 && Math.hypot(coords[0][0]-coords[coords.length-1][0], coords[0][1]-coords[coords.length-1][1])<1e-4)
@@ -1136,13 +1147,67 @@ lastParseMeta = {
       if(obj.type==='Feature') return { type:'FeatureCollection', features:[obj] };
       return { type:'FeatureCollection', features:[{ type:'Feature', properties:{}, geometry: obj }] };
     }
+	
+	//deprecada
 	function swapAxesFromTextarea(){
 	  const tArea = document.getElementById('coordsInput');
 	  if (!tArea) return;
 	  const raw = (tArea.value || '').trim();
-	  handle(raw, { forcePoint: true, source: 'pasted', userSwapped: true });
+	  const m = raw.match(/(-?\d+(?:\.\d+)?)[\s,]+(-?\d+(?:\.\d+)?)/);
+	  if (!m) { alert('Could not find a coordinate pair to swap.'); return; }
+	  const a = m[1], b = m[2];          // a=primer número, b=segundo
+	  const swapped = `${b}, ${a}`;      // ← aquí SÍ invertimos
+	  tArea.value = swapped;             // reflejar en el textarea
+	  handle(swapped, { forcePoint: true, source: 'pasted-swap', userSwapped: true });
+	}
+	
+	
+	function getFirstPointCoordFromFC(fc){
+	  function fromGeom(g){
+	    if(!g) return null;
+	    if(g.type === 'Point') return g.coordinates;
+	    if(g.type === 'GeometryCollection'){
+	      for (const gg of (g.geometries||[])){ const r = fromGeom(gg); if (r) return r; }
+	    }
+	    if(g.type === 'MultiPoint' || g.type === 'LineString'){
+	      const arr = g.coordinates||[]; return arr.length ? arr[0] : null;
+	    }
+	    if(g.type === 'Polygon' || g.type === 'MultiLineString'){
+	      const arr = g.coordinates?.[0]||[]; return arr.length ? arr[0] : null;
+	    }
+	    if(g.type === 'MultiPolygon'){
+	      const arr = g.coordinates?.[0]?.[0]||[]; return arr.length ? arr[0] : null;
+	    }
+	    return null;
+	  }
+	  if (!fc) return null;
+	  if (fc.type === 'FeatureCollection'){
+	    for (const f of (fc.features||[])){ const r = fromGeom(f?.geometry); if (r) return r; }
+	    return null;
+	  }
+	  if (fc.type === 'Feature') return fromGeom(fc.geometry);
+	  return fromGeom(fc);
 	}
 
+	function swapAxesFromCurrentFeature(){
+	  if (!lastGeoJSON){ alert('No geometry available to swap.'); return; }
+	  const c = getFirstPointCoordFromFC(lastGeoJSON);
+	  if (!c || c.length < 2){ alert('Swap only works for a single point.'); return; }
+
+	  const [lon, lat] = c;                    // lo que hay ahora en el mapa (lon,lat)
+	  const swappedTxt = `${lon}, ${lat}`;    // invertimos a lat,lon como texto
+	  //const tArea = document.getElementById('coordsInput');
+	  //if (tArea) tArea.value = swappedTxt;     // reflejar en el textarea
+
+	  // Reprocesa forzado como Point (bypass de heurística)
+	  handle(swappedTxt, { forcePoint: true, source: 'pasted-swap', userSwapped: true });
+	}
+  document.addEventListener('click', (e) => {
+    const a = e.target.closest && e.target.closest('#swapAxes');
+    if (!a) return;
+    e.preventDefault();
+    swapAxesFromCurrentFeature(); // ver función de arriba
+  });
     function guessGeometry(text){
       // 1) GeoJSON or WKT
       let g = parseGeoJSON(text); if(g) return g;
@@ -1294,7 +1359,9 @@ lastParseMeta = {
 	      axisReason: 'device geolocation — heuristics bypassed',
 	      accuracy: opts.accuracy ?? null
 	    };
-		};
+	} else {
+	  lastParseMeta = { kind: 'decimal', geomType: 'Point', axisSwitched: true, axisDecision:'user swap', axisReason:'manual' };
+	}
 	    // para conservar la visibilidad de “Adjustments”, lo marcamos como 'pasted'
 	    lastInputSource = 'pasted';
 	    geomOrFC = {
@@ -1321,10 +1388,15 @@ lastParseMeta = {
 	  const hintText = buildHintFromMeta(lastInputSource, lastParseMeta, fc);
 	  hint.innerHTML = hintText;              
 	  // Listener del enlace (si existe)
-	  document.getElementById('swapAxes')?.addEventListener('click', (e)=>{
-	    e.preventDefault();
-	    swapAxesFromTextarea();
-	  });
+	  // document.getElementById('swapAxes')?.addEventListener('click', (e)=>{
+	  //   e.preventDefault();
+	  //   swapAxesFromTextarea();
+	  // });
+	  // document.getElementById('swapAxes')?.addEventListener('click', (e)=>{
+// 	    e.preventDefault();
+// 	    swapAxesFromCurrentFeature();
+// 	  });
+	  
 	  
 	  updateAdjustmentsVisibility();
 	  updateHintWithLocation(fc); 
@@ -1339,6 +1411,8 @@ lastParseMeta = {
 	  //togglePlantationsTiles();
 	  scrollToResult();
 	  runGfwValidation();
+	  //console.log(fc);
+	  //runWhispAnalysis(fc);
       msg.textContent = 'Parsed successfully.';
 	   // --- update Raw JSON panel ---
 	  el('json').textContent = JSON.stringify(fc, null, 2);
@@ -1408,6 +1482,12 @@ lastParseMeta = {
      GFW integration
      ========================= */
   const GFW_API_KEY = '10f7953e-c8db-4d34-99c3-ea4bb4a74766';
+  const WHISP_API_KEY = '90621acc-d60e-448c-9109-9421ac0a9016';
+
+  const WHISP_BASE = 'https://corsproxy.io/?https://whisp.openforis.org';
+  const WHISP_SUBMIT = `${WHISP_BASE}/api/submit/geojson`;
+  
+   
   
   const GFW_BASE = 'https://data-api.globalforestwatch.org';
   const GFW_BASE_PROXY = 'https://corsproxy.io/?url=https://data-api.globalforestwatch.org';
@@ -1416,9 +1496,9 @@ lastParseMeta = {
   const VERSION = 'v1.12'; // Ajusta si cambia la versión publicada
   const YEARS = { start: 2020, end: 2024 };
   const EUDR_RESULTS = {
-    COMPLIANT:        { label: 'Compliant',         color: '#e6f4ea' }, // verde muy claro
-    NEED_VERIFICATION:{ label: 'Need verification', color: '#fffbe6' }, // amarillo pálido
-    NOT_COMPLIANT:    { label: 'Not compliant',     color: '#fde8e8' }  // rojo muy claro
+    COMPLIANT:        { label: 'Low risk',            color: '#e6f4ea' }, // green
+    NEED_VERIFICATION:{ label: 'More info needed',    color: '#fffbe6' }, // yellow
+    NOT_COMPLIANT:    { label: 'High risk', color: '#fde8e8' } // red
   };
   const PLANTATIONS_TILE= 'https://tiles.globalforestwatch.org/gfw_planted_forests/v20231128/corrected/{z}/{x}/{y}.png'; 
   const TILE_LOSS = `${TILE_BASE}/umd_tree_cover_loss/v1.12/tcd_30/{z}/{x}/{y}.png`;
@@ -1430,6 +1510,24 @@ lastParseMeta = {
   const gfwMsg       = document.getElementById('gfwMsg');
 
   let gfwTileLayer = null;
+  
+  function deriveWhispFlags(whispJson){
+    const p = whispJson?.data?.features?.[0]?.properties || {};
+	// was:
+	// const planted = p.Ind_07_planted_plantations_2020 === 'yes' || (p.GFT_planted_plantation > 0) || (p.IIASA_planted_plantation > 0);
+
+	// better:
+	const plantedLabel = p.Ind_07_planted_plantations_2020 === 'yes';
+	const fracPlant = Math.max(+(p.GFT_planted_plantation || 0), +(p.IIASA_planted_plantation || 0));
+	const plantedHigh = plantedLabel && fracPlant >= 90;
+	const plantedMid  = !plantedHigh && fracPlant >= 60;
+
+	
+    const natural   = p.Ind_05_primary_2020 === 'yes' || p.Ind_06_nat_reg_forest_2020 === 'yes' || (p.GFT_primary > 0) || (p.TMF_undist > 0) || (p.IFL_2020 > 0);
+    const lossAfter = (p.GFC_loss_after_2020 > 0) || (p.TMF_def_after_2020 > 0) || (p.RADD_after_2020 > 0) || (p.MODIS_fire_after_2020 > 0);
+    const riskTimber = p.risk_timber || null;
+    return { planted: plantedHigh, plantedMid, natural, lossAfter, riskTimber, properties: p };
+  }
   
   async function postQuery(dataset, version, sql, geometry){
     const url = `${GFW_BASE}/dataset/${dataset}/${version}/query/json`;
@@ -1444,12 +1542,12 @@ lastParseMeta = {
   }
   function normalizeGeometryForQuery(geometry){
     if (geometry?.type === 'Point' && Array.isArray(geometry.coordinates)) {
-      return pointToSquarePolygon(geometry.coordinates, 30);
+      return pointToSquarePolygon(geometry.coordinates, 180);
     }
     return geometry;
   }
   
-  function pointToSquarePolygon(coords, sizeMeters = 30){
+  function pointToSquarePolygon(coords, sizeMeters = 180){
     const [lng, lat] = coords;
     const half = sizeMeters / 2;
 
@@ -1473,7 +1571,7 @@ lastParseMeta = {
 	  
 	  // Si es un Point, conviértelo en un cuadrado ~30x30 m en WGS84
 	  if (geometry?.type === 'Point' && Array.isArray(geometry.coordinates)) {
-	      geometry = pointToSquarePolygon(geometry.coordinates, 30);
+	      geometry = pointToSquarePolygon(geometry.coordinates, 180);
 	  }
     const res = await fetch(`${GFW_BASE}/geostore/`, {
       method: 'POST',
@@ -1489,6 +1587,56 @@ lastParseMeta = {
     const id = j?.data?.id || j?.data?.gfw_geostore_id;
     if (!id) throw new Error('No geostore_id in response');
     return id;
+  }
+  
+  // === Whisp integration === (not called anymore)
+  async function runWhispAnalysis(geojson) {
+    if (!geojson) {
+      console.warn('No GeoJSON to analyze.');
+      return;
+    }
+
+    // Ensure it's a polygon (WHISP rejects points)
+    let geom = geojson;
+    if (geojson.type === 'FeatureCollection' && geojson.features?.[0]) {
+      const g = geojson.features[0].geometry;
+      if (g.type === 'Point') {
+        const poly = pointToSquarePolygon(g.coordinates, 180); // reuse your helper
+        geom = {
+          type: 'FeatureCollection',
+          features: [{ type: 'Feature', properties: {}, geometry: poly }]
+        };
+      }
+    }
+
+    // Append analysisOptions as required by WHISP
+    const payload = {
+      ...geom,
+      analysisOptions: {
+        nationalCodes: ['vn'], // example; adjust to what you need
+        unitType: 'percent',
+        async: false,
+        externalIdColumn: ''
+      }
+    };
+
+
+    try {
+      const res = await fetch(WHISP_SUBMIT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': WHISP_API_KEY
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const json = await res.json();
+      console.log('WHISP status:', res.status);
+      console.log('WHISP response:', json);
+    } catch (err) {
+      console.error('WHISP error:', err);
+    }
   }
 
   async function queryLossYesNo(geometry) {
@@ -1552,59 +1700,70 @@ lastParseMeta = {
   }
 
   
-  function assessEUDR({ hasLoss, inPlantation, inManagedForest, inWoodFiber, inWDPA, inSBTN }, years){
-    const ctx = [];
-    const inProductive = !!(inPlantation || inManagedForest || inWoodFiber);
+  function assessEUDR(input, years){
+    const gfw = input.gfw || {};
+    const wh  = input.whisp || {};
 
-    // Priority 1: Protected areas
-    if (inWDPA) {
-      return { code: 'NOT_COMPLIANT', verdict: 'Not compliant', level: 'high', 
-        reason: 'Inside protected area (WDPA). Extraction likely illegal.',
-        notes: ['Prohibit sourcing.'] };
+    const hasLoss      = !!(gfw.hasLoss || wh.lossAfter);
+	//const inProductive = !!(gfw.inPlantation || gfw.inManagedForest || gfw.inWoodFiber || wh.planted); // wh.planted now = plantedHigh
+	const inProductive = !!(wh.planted); // wh.planted now = plantedHigh
+
+	// If mixed plantation (plantedMid) and no other productive flags:
+	if (!inProductive && wh.plantedMid) {
+	  if (hasLoss) {
+	    return { code:'NOT_COMPLIANT', verdict:'High risk', reason:'Post-2020 loss in mixed area; plantation fraction insufficient.' };
+	  }
+	  return { code:'NEED_VERIFICATION', verdict:'More info needed', reason:'Mixed plantation coverage; verify stand boundaries & permits.' };
+	}
+	console.log(wh.planted);
+    const inNatural    = !!(wh.natural || gfw.inSBTN); // gfw.inSBTN is null for now in your code
+
+    // Priority: protected areas
+    if (gfw.inWDPA) {
+      return { code:'NOT_COMPLIANT', verdict:'Not compliant', level:'high',
+        reason:'Inside protected area (WDPA).', notes:['Prohibit sourcing.'] };
     }
 
-    // Priority 0: Loss baseline
+    // Loss outside productive forest
     if (hasLoss && !inProductive) {
-      return { code: 'NOT_COMPLIANT', verdict: 'Not compliant', level: 'high',
-        reason: `Tree cover loss in ${years.start}–${years.end} outside plantation/managed areas (deforestation).`,
-        notes: ['Reject or investigate exceptional legal authorization.'] };
+      return { code:'NOT_COMPLIANT', verdict:'Not compliant', level:'high',
+        reason:`Tree cover loss in ${years.start}–${years.end} outside plantation/managed areas.`,
+        notes:['Reject or require exceptional legal authorization.'] };
     }
 
-    // Priority 2: Natural forest
-    if (inSBTN && !inProductive) {
+    // Natural forest caution
+    if (inNatural && !inProductive) {
       if (hasLoss) {
-        return { code: 'NOT_COMPLIANT', verdict: 'Not compliant', level: 'high',
-          reason: `Loss detected in natural forest (SBTN).`,
-          notes: ['Reject under EUDR deforestation definition.'] };
+        return { code:'NOT_COMPLIANT', verdict:'Not compliant', level:'high',
+          reason:'Post-2020 loss in natural/primary forest.',
+          notes:['Reject under EUDR deforestation definition.'] };
       }
-      // pre-extraction case or no observed loss
-      return { code: 'NEED_VERIFICATION', verdict: 'Needs verification', level: 'medium-high',
-        reason: 'Natural forest (SBTN). Any extraction risks conversion.',
-        notes: ['Require robust evidence of non-conversion and legal authorization.'] };
+      return { code:'NEED_VERIFICATION', verdict:'Needs verification', level:'medium-high',
+        reason:'Natural forest context; any extraction risks conversion.',
+        notes:['Require robust legal & non-conversion evidence.'] };
     }
 
-    // Priority 3: Productive forest (plantation / managed / wood fiber)
+    // Productive forest
     if (inProductive) {
       if (hasLoss) {
-        return { code: 'COMPLIANT', verdict: 'Compliant', level: 'low',
-          reason: `Loss only within plantation/managed forest (rotation/harvest).`,
-          notes: ['Keep permit/concession evidence.'] };
+        return { code:'COMPLIANT', verdict:'Compliant', level:'low',
+          reason:'Loss confined to plantation/managed forest (likely rotation/harvest).',
+          notes:['Keep permits & management docs.'] };
       }
-      return { code: 'COMPLIANT', verdict: 'Compliant', level: 'low',
-        reason: 'Inside plantation/managed forest with no loss since 2020.',
-        notes: ['Collect/verify permits and management docs.'] };
+      return { code:'COMPLIANT', verdict:'Compliant', level:'low',
+        reason:'Plantation/managed forest; no loss since 2020.',
+        notes:['Collect/verify permits.'] };
     }
 
-    // Priority 4: Everything else
+    // Everything else
     if (hasLoss) {
-      return { code: 'NOT_COMPLIANT', verdict: 'Not compliant', level: 'high',
-        reason: `Loss detected in ${years.start}–${years.end} outside recognized forest management/plantation.`,
-        notes: ['Reject unless strong contrary evidence.'] };
-    } else {
-      return { code: 'NEED_VERIFICATION', verdict: 'Needs verification', level: 'medium-high',
-        reason: 'No loss detected, but area is outside mapped forest/plantation layers.',
-        notes: ['Demonstrate non-forest status since 2020 (imagery, land registers).'] };
+      return { code:'NOT_COMPLIANT', verdict:'Not compliant', level:'high',
+        reason:`Loss detected in ${years.start}–${years.end} outside recognized management/plantation.`,
+        notes:['Reject unless strong contrary evidence.'] };
     }
+    return { code:'NEED_VERIFICATION', verdict:'Needs verification', level:'medium-high',
+      reason:'No loss detected, but area not mapped as managed/plantation.',
+      notes:['Demonstrate non-forest status since 2020 (imagery, cadaster).'] };
   }
   
   async function runGfwValidation(){
@@ -1633,12 +1792,45 @@ lastParseMeta = {
 	  const inManagedForest  = await queryManagedForests(geomQ);
 	  const inWDPA           = await queryWDPA(geomQ);
 	  const inSBTN           = null;
-
-      const res = assessEUDR(
-        { hasLoss, inPlantation, inManagedForest, inWoodFiber, inWDPA, inSBTN },
-        YEARS
-      );
-      gfwMsg.textContent = `${res.verdict} — ${res.reason}`;
+	  // ---- WHISP (synchronous) ----
+	  // Build a FeatureCollection for WHISP; polygonize point if needed
+	  let whispFC;
+	  if (geom.type === 'Point') {
+	    const poly = pointToSquarePolygon(geom.coordinates, 180);
+	    whispFC = { type:'FeatureCollection', features:[{ type:'Feature', properties:{}, geometry: poly }] };
+	  } else {
+	    whispFC = { type:'FeatureCollection', features:[{ type:'Feature', properties:{}, geometry: geom }] };
+	  }
+	  const whispPayload = {
+	    ...whispFC,
+	    analysisOptions: {
+	      nationalCodes: [],   // put ['vn'] etc. if you want enrichment
+	      unitType: 'percent',
+	      async: false,
+	      externalIdColumn: ''
+	    }
+	  };
+	  let whispJson = null;
+	  try {
+	    const resW = await fetch(WHISP_SUBMIT, {
+	      method:'POST',
+	      headers:{ 'Content-Type':'application/json', 'x-api-key': WHISP_API_KEY },
+	      body: JSON.stringify(whispPayload)
+	    });
+	    whispJson = await resW.json();
+	    console.log('WHISP response:', whispJson);
+	  } catch(e){ console.warn('WHISP error:', e); }
+	  const whFlags = deriveWhispFlags(whispJson);
+	  
+	  const gfwFlags = { hasLoss, inPlantation, inManagedForest, inWoodFiber, inWDPA, inSBTN };
+	  const res = assessEUDR({ gfw: gfwFlags, whisp: whFlags }, YEARS);
+      // const res = assessEUDR(
+//         { hasLoss, inPlantation, inManagedForest, inWoodFiber, inWDPA, inSBTN },
+//         YEARS
+//       );
+      //gfwMsg.textContent = `${res.verdict} — ${res.reason}`;
+	  const label = EUDR_RESULTS[res.code]?.label || res.verdict || 'Result';
+	  gfwMsg.textContent = `${label} — ${res.reason}`;
 	  const panel = document.getElementById('gfwPanel');
 	  lastValidation = res; // guarda el resultado estructurado
 	  if (panel && res?.code && EUDR_RESULTS[res.code]) {
